@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#9fd0e8"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><title>Беги от гномов</title>
+<style>
+:root{--sky:#9fd0e8;--grass:#5e9a4a;--road:#7b7468;--road2:#847d71;--ink:#1d2a1a;--bg:#9fd0e8;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--sky:#1b2b45;--grass:#2c4a2a;--road:#4a463f;--road2:#524d45;--ink:#e6efe0;--bg:#1b2b45}}
+:root[data-theme="dark"]{--sky:#1b2b45;--grass:#2c4a2a;--road:#4a463f;--road2:#524d45;--ink:#e6efe0;--bg:#1b2b45}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+canvas{display:block;width:100%;height:100%}
+#menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(0,0,0,.55);color:#fff;text-align:center;padding:24px}
+#menu h1{margin:0;font-size:34px}
+#menu p{margin:0;max-width:320px;line-height:1.4}
+.btn{font:700 18px system-ui,sans-serif;min-width:210px;padding:14px 22px;border:0;border-radius:14px;background:#3f8f4e;color:#fff}
+.btn.alt{background:rgba(255,255,255,.18)}
+#pad{position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));display:none;justify-content:space-between;padding:0 16px;pointer-events:none}
+#pad button{pointer-events:auto;width:76px;height:76px;border-radius:50%;border:0;background:rgba(0,0,0,.4);color:#fff;font-size:30px;touch-action:none}
+#pad button:active{background:rgba(63,143,78,.85)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="menu"><h1 id="mt">Беги от гномов</h1><p id="ms">Беги вперёд, перепрыгивай шипы и не подпускай гномов.</p><button class="btn" id="play">Играть</button><button class="btn alt" id="how">Как играть</button><p id="help" hidden>Коснись экрана, чтобы прыгнуть. Стрелки ◀ ▶ или свайп влево и вправо переносят на соседнюю дорожку. Каждый шип приближает гномов, после третьего они тебя поймают.</p><p id="best"></p></div>
+<div id="pad"><button id="bl">◀</button><button id="br">▶</button></div>
+<script>
+const $=id=>document.getElementById(id);
+const cv=$('c'),cx=cv.getContext('2d');
+const L=60,ZM=220,MAXG=45,JV=620,GR=1800;
+let W,H,F,HOR,HC;
+function resize(){
+  const d=window.devicePixelRatio||1;
+  W=cv.clientWidth;H=cv.clientHeight;
+  cv.width=W*d;cv.height=H*d;cx.setTransform(d,0,0,d,0,0);
+  HOR=H*.3;F=Math.min(H*.8,.85*W/(3.2*L)*ZM);HC=(H*.5)*ZM/F;
+}
+addEventListener('resize',resize);resize();
+const P=(x,y,z)=>[W/2+x*F/z,HOR+(HC-y)*F/z];
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let state='menu',t=0,dist=0,speed=450,gapz=MAXG,inv=0;
+let lane=0,px=0,gx1=0,gx2=0,man={y:0,vy:0},obs=[],nextZ=0,best=0;
+try{best=+localStorage.getItem('gnome-best')||0}catch(e){}
+
+function showMenu(title,text,again){
+  $('mt').textContent=title;$('ms').textContent=text;$('best').textContent='Рекорд: '+best+' м';
+  $('help').hidden=true;$('play').textContent=again?'Играть снова':'Играть';
+  $('menu').style.display='flex';$('pad').style.display='none';
+}
+function reset(){
+  state='play';dist=0;speed=450;gapz=MAXG;inv=0;lane=0;px=gx1=gx2=0;man.y=0;man.vy=0;obs=[];nextZ=900;
+  $('menu').style.display='none';$('pad').style.display='flex';
+}
+function caught(){
+  if(state!=='play')return;
+  state='over';
+  const sc=Math.floor(dist/15);
+  if(sc>best){best=sc;try{localStorage.setItem('gnome-best',best)}catch(e){}}
+  showMenu('Гномы поймали!','Ты пробежал '+sc+' м',true);
+}
+const jump=()=>{if(state==='play'&&man.y===0)man.vy=JV};
+const changeLane=d=>{if(state==='play')lane=Math.max(-1,Math.min(1,lane+d))};
+$('play').onclick=reset;
+$('how').onclick=()=>{$('help').hidden=!$('help').hidden};
+$('best').textContent='Рекорд: '+best+' м';
+$('bl').addEventListener('pointerdown',e=>{e.preventDefault();changeLane(-1)});
+$('br').addEventListener('pointerdown',e=>{e.preventDefault();changeLane(1)});
+let sx=0,sy=0;
+cv.addEventListener('pointerdown',e=>{e.preventDefault();sx=e.clientX;sy=e.clientY});
+cv.addEventListener('pointerup',e=>{
+  const a=e.clientX-sx,b=e.clientY-sy;
+  if(Math.abs(a)>40&&Math.abs(a)>Math.abs(b))changeLane(a>0?1:-1);else jump();
+});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump()}
+  if(e.code==='ArrowLeft')changeLane(-1);
+  if(e.code==='ArrowRight')changeLane(1);
+});
+
+function spawn(){
+  const ls=[-1,0,1].sort(()=>Math.random()-.5).slice(0,1+(Math.random()<.4?1:0));
+  for(const l of ls)obs.push({z:nextZ,lane:l});
+  nextZ+=speed*(.8+Math.random()*.7)+160;
+}
+function update(dt){
+  t+=dt;
+  if(state!=='play')return;
+  speed=Math.min(900,450+dist/60);
+  dist+=speed*dt;
+  px+=(lane*L-px)*Math.min(1,12*dt);
+  gx1+=(px-gx1)*Math.min(1,5*dt);
+  gx2+=(gx1-gx2)*Math.min(1,4*dt);
+  if(man.y>0||man.vy>0){man.vy-=GR*dt;man.y+=man.vy*dt;if(man.y<=0){man.y=0;man.vy=0}}
+  for(const o of obs)o.z-=speed*dt;
+  nextZ-=speed*dt;
+  obs=obs.filter(o=>o.z>90);
+  if(nextZ<=1900)spawn();
+  gapz=Math.min(MAXG,gapz+3*dt);
+  if(inv>0)inv-=dt;
+  if(gapz<=8)caught();
+  if(inv<=0&&state==='play'){
+    for(const o of obs){
+      if(Math.abs(o.z-ZM)<14&&Math.abs(px-o.lane*L)<24&&man.y<30){
+        gapz-=15;inv=1.2;
+        if(gapz<=8)caught();
+        break;
+      }
+    }
+  }
+}
+
+function quad(a,b,c,d,col){
+  cx.fillStyle=col;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.lineTo(c[0],c[1]);cx.lineTo(d[0],d[1]);cx.closePath();cx.fill();
+}
+const band=(z0,z1,x0,x1,col)=>quad(P(x0,0,z0),P(x1,0,z0),P(x1,0,z1),P(x0,0,z1),col);
+
+function person(x,y,z,run,kind){
+  const s=F/z*1.3,[sx,sy]=P(x,y,z);
+  cx.save();
+  cx.fillStyle='rgba(0,0,0,.25)';
+  const [shx,shy]=P(x,0,z);
+  cx.beginPath();cx.ellipse(shx,shy,16*s,5*s,0,0,7);cx.fill();
+  cx.translate(sx,sy);cx.scale(s,s);
+  const l=Math.sin(run*14)*7,air=y>2;
+  cx.strokeStyle='#23301f';cx.lineWidth=4;cx.lineCap='round';
+  cx.beginPath();
+  cx.moveTo(-3,-14);cx.lineTo(air?-6:-3-l,air?-4:0);
+  cx.moveTo(3,-14);cx.lineTo(air?6:3+l,0);
+  cx.stroke();
+  if(kind==='man'){
+    cx.fillStyle='#2f6fdb';cx.fillRect(-8,-33,16,20);
+    cx.fillStyle='#e9a23b';cx.fillRect(-5,-30,10,11);
+    cx.strokeStyle='#2f6fdb';cx.lineWidth=3.5;
+    cx.beginPath();cx.moveTo(-8,-30);cx.lineTo(-11,-18+l*.4);cx.moveTo(8,-30);cx.lineTo(11,-18-l*.4);cx.stroke();
+    cx.fillStyle='#5a3a22';cx.beginPath();cx.arc(0,-41,8,0,7);cx.fill();
+  }else{
+    cx.fillStyle='#5b7a3a';cx.fillRect(-8,-27,16,17);
+    cx.fillStyle='#f0c9a0';cx.beginPath();cx.arc(0,-32,7,0,7);cx.fill();
+    cx.fillStyle='#c8372d';cx.beginPath();cx.moveTo(-9,-35);cx.lineTo(9,-35);cx.lineTo(0,-56);cx.fill();
+  }
+  cx.restore();
+}
+function spikes(o){
+  const a=Math.max(.05,Math.min(1,(2000-o.z)/700));
+  cx.globalAlpha=a;
+  const x=o.lane*L-22;
+  for(let i=0;i<3;i++){
+    const x0=x+i*15,b1=P(x0,0,o.z),b2=P(x0+15,0,o.z),ap=P(x0+7.5,38,o.z);
+    cx.fillStyle='#9aa2ac';cx.strokeStyle='#4b525b';cx.lineWidth=1.5;
+    cx.beginPath();cx.moveTo(b1[0],b1[1]);cx.lineTo(ap[0],ap[1]);cx.lineTo(b2[0],b2[1]);cx.closePath();cx.fill();cx.stroke();
+  }
+  cx.globalAlpha=1;
+}
+
+function draw(){
+  cx.fillStyle=css('--sky');cx.fillRect(0,0,W,HOR);
+  cx.fillStyle=css('--grass');cx.fillRect(0,HOR,W,H-HOR);
+  band(60,2600,-1.6*L,1.6*L,css('--road'));
+  const off=dist%280;
+  for(let k=-1;k<18;k++){
+    const z0=Math.max(60,60+k*140-off),z1=60+(k+1)*140-off;
+    if(z1<=60)continue;
+    if(k%2===0){
+      band(z0,z1,-1.6*L,1.6*L,css('--road2'));
+      for(const lx of[-.5*L,.5*L])band(z0,Math.min(z1,z0+70),lx-1.3,lx+1.3,'rgba(255,255,255,.55)');
+    }
+  }
+  const items=[];
+  for(const o of obs)items.push({z:o.z,f:()=>spikes(o)});
+  items.push({z:ZM,f:()=>{if(!(inv>0&&Math.floor(t*14)%2))person(px,man.y,ZM,t,'man')}});
+  items.push({z:ZM-gapz,f:()=>person(gx1,0,ZM-gapz,t+1,'gnome')});
+  items.push({z:ZM-gapz-14,f:()=>person(gx2+14,0,ZM-gapz-14,t,'gnome')});
+  items.sort((a,b)=>b.z-a.z);
+  for(const it of items)it.f();
+  cx.fillStyle='#fff';cx.strokeStyle='rgba(0,0,0,.5)';cx.lineWidth=3;
+  cx.textAlign='left';cx.font='700 22px system-ui,sans-serif';
+  const sc=Math.floor(dist/15)+' м';cx.strokeText(sc,16,34);cx.fillText(sc,16,34);
+  cx.textAlign='right';cx.font='14px system-ui,sans-serif';
+  const bs='Рекорд: '+best+' м';cx.strokeText(bs,W-16,30);cx.fillText(bs,W-16,30);
+  cx.textAlign='left';cx.strokeText('Гномы',16,58);cx.fillText('Гномы',16,58);
+  cx.fillStyle='rgba(0,0,0,.35)';cx.fillRect(72,48,100,10);
+  cx.fillStyle=gapz<25?'#c8372d':'#3f8f4e';cx.fillRect(72,48,Math.max(0,gapz/MAXG*100),10);
+}
+
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(.033,(now-last)/1000);last=now;
+  update(dt);draw();requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
